@@ -28,6 +28,10 @@ if not all(col in df.columns for col in required_cols):
     st.error(f"Training file is missing required columns: {required_cols}")
     st.stop()
 
+# Show class distribution
+st.subheader("📊 Class Distribution (Training Data)")
+st.write(df['Enrolled'].value_counts().rename({0: "Not Enrolled (0)", 1: "Enrolled (1)"}))
+
 # Clean and preprocess
 df = df.dropna(subset=required_cols)
 df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce')
@@ -48,19 +52,21 @@ y = df[target]
 
 # Train/test split and model training
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-model = RandomForestClassifier(n_estimators=100, random_state=42)
+
+# ✅ Use class_weight='balanced'
+model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
 model.fit(X_train, y_train)
 
 # Evaluate
 y_pred = model.predict(X_test)
-st.subheader("Model Performance on Training Data")
+st.subheader("📈 Model Performance on Training Data")
 st.text(classification_report(y_test, y_pred))
 st.write("Confusion Matrix:")
 st.write(confusion_matrix(y_test, y_pred))
 
 # Prediction section
 st.markdown("---")
-st.header("📈 Upload August 2025 Data for Prediction")
+st.header("🧪 Upload August 2025 Data for Prediction")
 
 aug_file = st.file_uploader("Upload Excel or CSV File for August Prediction", type=["xlsx", "xls", "csv"])
 
@@ -78,7 +84,7 @@ if aug_file:
         aug_df['Create Month'] = aug_df['Create Date'].dt.month
         aug_df['Create Year'] = aug_df['Create Date'].dt.year
 
-        # Drop unseen countries or deal sources
+        # Handle unseen values
         valid_countries = le_country.classes_
         valid_sources = le_source.classes_
 
@@ -89,14 +95,14 @@ if aug_file:
             st.warning("Some rows had unseen countries or deal sources and were removed.")
             aug_df = aug_df[~missing_country & ~missing_source]
 
-        # Encode known values
+        # Encode
         aug_df['Country_enc'] = le_country.transform(aug_df['Country'])
         aug_df['Source_enc'] = le_source.transform(aug_df['JetLearn Deal Source'])
 
         X_aug = aug_df[features]
         aug_df['Predicted Enrolment'] = model.predict(X_aug)
 
-        # Categorize deals
+        # Tag deal timing
         aug_start = pd.Timestamp("2025-08-01")
         aug_end = pd.Timestamp("2025-08-31")
 
@@ -118,7 +124,7 @@ if aug_file:
         total = result['Predicted Enrolment'].sum()
         result.loc[len(result.index)] = ['Total Predicted Enrolments for August', total]
 
-        st.subheader("Predicted Enrolments Breakdown")
+        st.subheader("🔮 Predicted Enrolments Breakdown")
         st.dataframe(result)
 
         # Download
