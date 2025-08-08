@@ -78,13 +78,25 @@ if aug_file:
         aug_df['Create Month'] = aug_df['Create Date'].dt.month
         aug_df['Create Year'] = aug_df['Create Date'].dt.year
 
+        # Drop unseen countries or deal sources
+        valid_countries = le_country.classes_
+        valid_sources = le_source.classes_
+
+        missing_country = ~aug_df['Country'].isin(valid_countries)
+        missing_source = ~aug_df['JetLearn Deal Source'].isin(valid_sources)
+
+        if missing_country.any() or missing_source.any():
+            st.warning("Some rows had unseen countries or deal sources and were removed.")
+            aug_df = aug_df[~missing_country & ~missing_source]
+
+        # Encode known values
         aug_df['Country_enc'] = le_country.transform(aug_df['Country'])
         aug_df['Source_enc'] = le_source.transform(aug_df['JetLearn Deal Source'])
 
         X_aug = aug_df[features]
         aug_df['Predicted Enrolment'] = model.predict(X_aug)
 
-        # Categorize deal timing
+        # Categorize deals
         aug_start = pd.Timestamp("2025-08-01")
         aug_end = pd.Timestamp("2025-08-31")
 
