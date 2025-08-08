@@ -3,24 +3,28 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
-import joblib
 
 st.set_page_config(page_title="JetLearn Enrolment Predictor", layout="wide")
 st.title("🎯 JetLearn Enrolment Predictor")
 
-# --- Load Training Data ---
+# --- Load and Prepare Training Data ---
 @st.cache_data
 def load_training_data():
     df = pd.read_csv("prediction_JL_cleaned.csv")
     df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce', dayfirst=True)
-    df['Payment Received Date'] = pd.to_datetime(df['Payment Received Date'], errors='coerce', dayfirst=True)
-    df['Enrolled'] = df['Payment Received Date'].notna().astype(int)
+
+    # Only create 'Enrolled' if 'Payment Received Date' exists
+    if 'Payment Received Date' in df.columns:
+        df['Payment Received Date'] = pd.to_datetime(df['Payment Received Date'], errors='coerce', dayfirst=True)
+        df['Enrolled'] = df['Payment Received Date'].notna().astype(int)
+    else:
+        df['Enrolled'] = 0  # fallback if missing
+
     return df.dropna(subset=['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score'])
 
 df = load_training_data()
 
-# --- Feature Engineering ---
-df['Create_YearMonth'] = df['Create Date'].dt.to_period('M')
+# --- Encode & Prepare Features ---
 df['Age'] = df['Age'].astype(int)
 df['HubSpot Deal Score'] = pd.to_numeric(df['HubSpot Deal Score'], errors='coerce').fillna(0).astype(int)
 
@@ -32,11 +36,11 @@ df['Source_enc'] = le_source.fit_transform(df['JetLearn Deal Source'])
 X = df[['Country_enc', 'Age', 'Source_enc', 'HubSpot Deal Score']]
 y = df['Enrolled']
 
-# --- Train the Model ---
+# --- Train ML Model ---
 model = RandomForestClassifier(random_state=42)
 model.fit(X, y)
 
-# --- Upload New Data ---
+# --- Upload New Excel for Prediction ---
 st.header("📤 Upload File for Prediction")
 uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"])
 
@@ -44,7 +48,7 @@ if uploaded_file:
     deals_df = pd.read_excel(uploaded_file)
     st.write("✅ File uploaded successfully!")
 
-    # --- Preprocess Input ---
+    # --- Preprocess ---
     deals_df['Create Date'] = pd.to_datetime(deals_df['Create Date'], errors='coerce', dayfirst=True)
     deals_df['Age'] = deals_df['Age'].astype(int)
     deals_df['HubSpot Deal Score'] = pd.to_numeric(deals_df['HubSpot Deal Score'], errors='coerce').fillna(0).astype(int)
@@ -88,6 +92,6 @@ if uploaded_file:
 
     st.dataframe(deals_df[display_cols])
 
-    # --- Download ---
+    # --- Download Button ---
     csv = deals_df.to_csv(index=False)
     st.download_button("📥 Download Results as CSV", csv, "predicted_enrolments_output.csv", "text/csv")
