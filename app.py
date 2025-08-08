@@ -9,10 +9,7 @@ import datetime
 
 st.title("JetLearn ML-based Enrolment Predictor")
 
-uploaded_file = st.file_uploader(
-    "Upload Excel File with Labeled Data (must include 'Enrolled' column)", 
-    type=["xlsx", "xls"]
-)
+uploaded_file = st.file_uploader("Upload Excel File with Labeled Data (must include 'Enrolled' column)", type=["xlsx", "xls"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
@@ -23,8 +20,8 @@ if uploaded_file:
     else:
         df = df.dropna(subset=required_cols)
 
-        # Convert Create Date to datetime
-        df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce', format="%Y-%m-%d %H:%M:%S")
+        # Preprocessing
+        df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce')
         df['Create Month'] = df['Create Date'].dt.month
         df['Create Year'] = df['Create Date'].dt.year
 
@@ -40,14 +37,14 @@ if uploaded_file:
         X = df[features]
         y = df[target]
 
-        # Train-test split
+        # Split the dataset
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Model training
+        # Train the model
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
 
-        # Evaluation
+        # Test accuracy
         y_pred = model.predict(X_test)
         st.subheader("Model Performance on Test Data")
         st.text(classification_report(y_test, y_pred))
@@ -57,33 +54,26 @@ if uploaded_file:
         # Upload new data for prediction
         st.markdown("---")
         st.header("📈 Predict Enrolments for August 2025")
-        aug_file = st.file_uploader(
-            "Upload Excel File for August Prediction (no 'Enrolled' column needed)", 
-            type=["xlsx", "xls"], 
-            key="predict_aug"
-        )
+        aug_file = st.file_uploader("Upload Excel File for August Prediction", type=["xlsx", "xls"], key="predict_aug")
 
         if aug_file:
             aug_df = pd.read_excel(aug_file)
-
             aug_required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score']
             if not all(col in aug_df.columns for col in aug_required_cols):
                 st.error(f"Missing one or more required columns: {aug_required_cols}")
             else:
-                # Process Create Date
-                aug_df['Create Date'] = pd.to_datetime(aug_df['Create Date'], errors='coerce', format="%Y-%m-%d %H:%M:%S")
+                aug_df['Create Date'] = pd.to_datetime(aug_df['Create Date'], errors='coerce')
                 aug_df['Create Month'] = aug_df['Create Date'].dt.month
                 aug_df['Create Year'] = aug_df['Create Date'].dt.year
 
-                # Encode using trained label encoders
+                # Encode using same encoders
                 aug_df['Country_enc'] = le_country.transform(aug_df['Country'])
                 aug_df['Source_enc'] = le_source.transform(aug_df['JetLearn Deal Source'])
 
-                # Predict
                 X_aug = aug_df[features]
                 aug_df['Predicted Enrolment'] = model.predict(X_aug)
 
-                # Categorize by deal month
+                # Categorize deal month
                 aug_start = pd.Timestamp("2025-08-01")
                 aug_end = pd.Timestamp("2025-08-31")
 
@@ -100,7 +90,7 @@ if uploaded_file:
                 aug_df['Deal Month Category'] = aug_df.apply(tag_month, axis=1)
                 aug_df = aug_df[aug_df['Deal Month Category'] != 'Future/Invalid']
 
-                # Group predictions
+                # Aggregate prediction
                 result = aug_df.groupby('Deal Month Category')['Predicted Enrolment'].sum().reset_index()
                 total = result['Predicted Enrolment'].sum()
                 result.loc[len(result.index)] = ['Total Predicted Enrolments for August', total]
@@ -108,6 +98,6 @@ if uploaded_file:
                 st.subheader("Predicted Enrolments Breakdown")
                 st.dataframe(result)
 
-                # Download button
+                # CSV export
                 csv = result.to_csv(index=False)
                 st.download_button("Download Prediction as CSV", csv, "ml_predicted_enrolments_aug.csv", "text/csv")
