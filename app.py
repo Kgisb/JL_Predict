@@ -7,38 +7,38 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 import datetime
 
-st.title("JetLearn ML-based Enrolment Predictor")
+st.title("JetLearn ML-Based Enrolment Predictor")
 
-# Load training data from fixed file
+# Load historical training data
 try:
     df = pd.read_csv("prediction_JL_cleaned.csv")
 except FileNotFoundError:
-    st.error("Training file 'prediction_JL_cleaned.csv' not found in the app directory.")
+    st.error("Training file 'prediction_JL_cleaned.csv' not found.")
     st.stop()
 
-# Derive 'Enrolled' from 'Payment Received Date '
+# Derive Enrolled column from Payment Received Date
 if 'Payment Received Date ' not in df.columns:
-    st.error("Required column 'Payment Received Date ' not found in the training file.")
+    st.error("Column 'Payment Received Date ' not found in training data.")
     st.stop()
 
 df['Enrolled'] = df['Payment Received Date '].notna().astype(int)
 
+# Check required columns
 required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score', 'Enrolled']
 if not all(col in df.columns for col in required_cols):
-    st.error(f"Training file is missing required columns: {required_cols}")
+    st.error("Missing required columns in training data.")
     st.stop()
 
 # Show class distribution
-st.subheader("📊 Class Distribution (Training Data)")
+st.subheader("📊 Class Distribution in Training Data")
 st.write(df['Enrolled'].value_counts().rename({0: "Not Enrolled (0)", 1: "Enrolled (1)"}))
 
-# Clean and preprocess
+# Preprocessing
 df = df.dropna(subset=required_cols)
 df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce')
 df['Create Month'] = df['Create Date'].dt.month
 df['Create Year'] = df['Create Date'].dt.year
 
-# Encode categorical variables
 le_country = LabelEncoder()
 le_source = LabelEncoder()
 df['Country_enc'] = le_country.fit_transform(df['Country'])
@@ -50,83 +50,54 @@ target = 'Enrolled'
 X = df[features]
 y = df[target]
 
-# Train/test split and model training
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# ✅ Use class_weight='balanced'
+# Train model
 model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-model.fit(X_train, y_train)
+model.fit(X, y)
 
-# Evaluate
-y_pred = model.predict(X_test)
-st.subheader("📈 Model Performance on Training Data")
-st.text(classification_report(y_test, y_pred))
-st.write("Confusion Matrix:")
-st.write(confusion_matrix(y_test, y_pred))
-
-# Prediction section
+# Upload new file for prediction
 st.markdown("---")
-st.header("🧪 Upload August 2025 Data for Prediction")
+st.header("📁 Upload Deal File to Predict Enrolment")
 
-aug_file = st.file_uploader("Upload Excel or CSV File for August Prediction", type=["xlsx", "xls", "csv"])
+uploaded_file = st.file_uploader("Upload Excel or CSV", type=["xlsx", "xls", "csv"])
 
-if aug_file:
-    if aug_file.name.endswith(".csv"):
-        aug_df = pd.read_csv(aug_file)
+if uploaded_file:
+    if uploaded_file.name.endswith(".csv"):
+        deals_df = pd.read_csv(uploaded_file)
     else:
-        aug_df = pd.read_excel(aug_file)
+        deals_df = pd.read_excel(uploaded_file)
 
-    aug_required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score']
-    if not all(col in aug_df.columns for col in aug_required_cols):
-        st.error(f"Prediction file is missing required columns: {aug_required_cols}")
+    input_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score']
+    if not all(col in deals_df.columns for col in input_cols):
+        st.error("Missing required columns in uploaded file.")
     else:
-        aug_df['Create Date'] = pd.to_datetime(aug_df['Create Date'], errors='coerce')
-        aug_df['Create Month'] = aug_df['Create Date'].dt.month
-        aug_df['Create Year'] = aug_df['Create Date'].dt.year
+        # Preprocess
+        deals_df['Create Date'] = pd.to_datetime(deals_df['Create Date'], errors='coerce')
+        deals_df['Create Month'] = deals_df['Create Date'].dt.month
+        deals_df['Create Year'] = deals_df['Create Date'].dt.year
 
-        # Handle unseen values
-        valid_countries = le_country.classes_
-        valid_sources = le_source.classes_
-
-        missing_country = ~aug_df['Country'].isin(valid_countries)
-        missing_source = ~aug_df['JetLearn Deal Source'].isin(valid_sources)
+        # Drop unseen categories
+        missing_country = ~deals_df['Country'].isin(le_country.classes_)
+        missing_source = ~deals_df['JetLearn Deal Source'].isin(le_source.classes_)
 
         if missing_country.any() or missing_source.any():
-            st.warning("Some rows had unseen countries or deal sources and were removed.")
-            aug_df = aug_df[~missing_country & ~missing_source]
+            st.warning("Some rows had unseen countries or sources and were removed.")
+            deals_df = deals_df[~missing_country & ~missing_source]
 
-        # Encode
-        aug_df['Country_enc'] = le_country.transform(aug_df['Country'])
-        aug_df['Source_enc'] = le_source.transform(aug_df['JetLearn Deal Source'])
+        deals_df['Country_enc'] = le_country.transform(deals_df['Country'])
+        deals_df['Source_enc'] = le_source.transform(deals_df['JetLearn Deal Source'])
 
-        X_aug = aug_df[features]
-        aug_df['Predicted Enrolment'] = model.predict(X_aug)
+        X_new = deals_df[features]
+        deals_df['Predicted Enrolment'] = model.predict(X_new)
 
-        # Tag deal timing
-        aug_start = pd.Timestamp("2025-08-01")
-        aug_end = pd.Timestamp("2025-08-31")
+        # Optional: check actual enrolment if Payment Received Date is present
+        if 'Payment Received Date ' in deals_df.columns:
+            deals_df['Actual Enrolment'] = deals_df['Payment Received Date '].notna().astype(int)
+            st.subheader("📊 Prediction vs Actual")
+            st.write(deals_df[['Predicted Enrolment', 'Actual Enrolment']].value_counts())
 
-        def tag_month(row):
-            if aug_start <= row['Create Date'] <= aug_end:
-                return "M0 (Aug Deals)"
-            elif row['Create Date'].month == 7 and row['Create Date'].year == 2025:
-                return "M-1 (Jul Deals)"
-            elif row['Create Date'] < pd.Timestamp("2025-07-01"):
-                return "M-n (Before Jul)"
-            else:
-                return "Future/Invalid"
+        # Show and download
+        st.subheader("🔮 Prediction Summary")
+        st.dataframe(deals_df[['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score', 'Predicted Enrolment']])
 
-        aug_df['Deal Month Category'] = aug_df.apply(tag_month, axis=1)
-        aug_df = aug_df[aug_df['Deal Month Category'] != "Future/Invalid"]
-
-        # Group and show predictions
-        result = aug_df.groupby('Deal Month Category')['Predicted Enrolment'].sum().reset_index()
-        total = result['Predicted Enrolment'].sum()
-        result.loc[len(result.index)] = ['Total Predicted Enrolments for August', total]
-
-        st.subheader("🔮 Predicted Enrolments Breakdown")
-        st.dataframe(result)
-
-        # Download
-        csv = result.to_csv(index=False)
-        st.download_button("Download Predictions as CSV", csv, "ml_predicted_enrolments_aug.csv", "text/csv")
+        csv = deals_df.to_csv(index=False)
+        st.download_button("Download Predictions CSV", csv, "predicted_enrolments.csv", "text/csv")
