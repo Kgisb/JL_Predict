@@ -13,7 +13,6 @@ def load_training_data():
     df = pd.read_csv("prediction_JL_cleaned.csv")
     df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce', dayfirst=True)
 
-    # Only create 'Enrolled' if 'Payment Received Date' exists
     if 'Payment Received Date' in df.columns:
         df['Payment Received Date'] = pd.to_datetime(df['Payment Received Date'], errors='coerce', dayfirst=True)
         df['Enrolled'] = df['Payment Received Date'].notna().astype(int)
@@ -40,19 +39,27 @@ y = df['Enrolled']
 model = RandomForestClassifier(random_state=42)
 model.fit(X, y)
 
-# --- Upload New Excel for Prediction ---
+# --- Upload File ---
 st.header("📤 Upload File for Prediction")
-uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload an Excel or CSV file", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
-    deals_df = pd.read_excel(uploaded_file)
-    st.write("✅ File uploaded successfully!")
+    file_name = uploaded_file.name.lower()
 
-    # --- Preprocess ---
+    # Read file based on extension
+    if file_name.endswith('.csv'):
+        deals_df = pd.read_csv(uploaded_file)
+    else:
+        deals_df = pd.read_excel(uploaded_file)
+
+    st.success("✅ File uploaded successfully!")
+
+    # --- Preprocess uploaded data ---
     deals_df['Create Date'] = pd.to_datetime(deals_df['Create Date'], errors='coerce', dayfirst=True)
     deals_df['Age'] = deals_df['Age'].astype(int)
     deals_df['HubSpot Deal Score'] = pd.to_numeric(deals_df['HubSpot Deal Score'], errors='coerce').fillna(0).astype(int)
 
+    # Encode using training mappings
     deals_df['Country_enc'] = le_country.transform(
         deals_df['Country'].where(deals_df['Country'].isin(le_country.classes_), le_country.classes_[0])
     )
@@ -60,11 +67,11 @@ if uploaded_file:
         deals_df['JetLearn Deal Source'].where(deals_df['JetLearn Deal Source'].isin(le_source.classes_), le_source.classes_[0])
     )
 
-    # --- Prediction ---
+    # --- Predict Enrolments ---
     features = ['Country_enc', 'Age', 'Source_enc', 'HubSpot Deal Score']
     deals_df['Predicted Enrolment'] = model.predict(deals_df[features])
 
-    # --- Add Conversion Columns ---
+    # --- Add conversion logic ---
     deals_df['Converted in Current Month'] = 0
     deals_df['Converted in Next Month'] = 0
 
@@ -84,7 +91,7 @@ if uploaded_file:
         deals_df['Converted in Current Month'] = deals_df.apply(current_month_conv, axis=1)
         deals_df['Converted in Next Month'] = deals_df.apply(next_month_conv, axis=1)
 
-    # --- Show Results ---
+    # --- Display Results ---
     st.subheader("🔮 Prediction Output")
     display_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score',
                     'Predicted Enrolment', 'Converted in Current Month', 'Converted in Next Month']
@@ -92,6 +99,6 @@ if uploaded_file:
 
     st.dataframe(deals_df[display_cols])
 
-    # --- Download Button ---
+    # --- Download Output ---
     csv = deals_df.to_csv(index=False)
     st.download_button("📥 Download Results as CSV", csv, "predicted_enrolments_output.csv", "text/csv")
