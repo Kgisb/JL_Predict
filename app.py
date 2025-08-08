@@ -13,12 +13,15 @@ except FileNotFoundError:
     st.error("Training file 'prediction_JL_cleaned.csv' not found.")
     st.stop()
 
+# Fix trailing space in column name
+df.columns = df.columns.str.strip()
+
 # Derive Enrolled column
-if 'Payment Received Date ' not in df.columns:
-    st.error("Missing 'Payment Received Date ' in training data.")
+if 'Payment Received Date' not in df.columns:
+    st.error("Missing 'Payment Received Date' in training data.")
     st.stop()
 
-df['Enrolled'] = df['Payment Received Date '].notna().astype(int)
+df['Enrolled'] = df['Payment Received Date'].notna().astype(int)
 
 required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score', 'Enrolled']
 if not all(col in df.columns for col in required_cols):
@@ -62,6 +65,9 @@ if uploaded_file:
     else:
         deals_df = pd.read_excel(uploaded_file)
 
+    # Fix column names
+    deals_df.columns = deals_df.columns.str.strip()
+
     input_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score']
     if not all(col in deals_df.columns for col in input_cols):
         st.error("Uploaded file missing required columns.")
@@ -85,19 +91,19 @@ if uploaded_file:
         deals_df['Predicted Enrolment'] = model.predict(X_new)
 
         # Actual Enrolment & Conversion Month logic
-        if 'Payment Received Date ' in deals_df.columns:
-            deals_df['Payment Received Date '] = pd.to_datetime(deals_df['Payment Received Date '], errors='coerce')
-            deals_df['Actual Enrolment'] = deals_df['Payment Received Date '].notna().astype(int)
+        if 'Payment Received Date' in deals_df.columns:
+            deals_df['Payment Received Date'] = pd.to_datetime(deals_df['Payment Received Date'], errors='coerce')
+            deals_df['Actual Enrolment'] = deals_df['Payment Received Date'].notna().astype(int)
 
             def current_month_conv(row):
-                if pd.isna(row['Payment Received Date ']) or pd.isna(row['Create Date']):
+                if pd.isna(row['Payment Received Date']) or pd.isna(row['Create Date']):
                     return 0
-                return int(row['Create Date'].to_period("M") == row['Payment Received Date '].to_period("M"))
+                return int(row['Create Date'].to_period("M") == row['Payment Received Date'].to_period("M"))
 
             def next_month_conv(row):
-                if pd.isna(row['Payment Received Date ']) or pd.isna(row['Create Date']):
+                if pd.isna(row['Payment Received Date']) or pd.isna(row['Create Date']):
                     return 0
-                return int(row['Create Date'].to_period("M") + 1 == row['Payment Received Date '].to_period("M"))
+                return int(row['Create Date'].to_period("M") + 1 == row['Payment Received Date'].to_period("M"))
 
             deals_df['Converted in Current Month'] = deals_df.apply(current_month_conv, axis=1)
             deals_df['Converted in Next Month'] = deals_df.apply(next_month_conv, axis=1)
