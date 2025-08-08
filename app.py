@@ -1,54 +1,103 @@
-import pandas as pd
 import streamlit as st
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
+import datetime
 
-# Title
-st.title("📊 JetLearn Enrolment Prediction Tool")
+st.title("JetLearn ML-based Enrolment Predictor")
 
-# Load data
-@st.cache_data
-def load_data():
-    try:
-        df = pd.read_csv("prediction_JL_cleaned.csv")
+uploaded_file = st.file_uploader("Upload Excel File with Labeled Data (must include 'Enrolled' column)", type=["xlsx", "xls"])
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+
+    required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score', 'Enrolled']
+    if not all(col in df.columns for col in required_cols):
+        st.error(f"Missing one or more required columns: {required_cols}")
+    else:
+        df = df.dropna(subset=required_cols)
+
+        # Preprocessing
         df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce')
-        df['Payment Received Date '] = pd.to_datetime(df['Payment Received Date '], errors='coerce')
-        df = df.dropna(subset=['Create Date', 'Payment Received Date ', 'Country', 'JetLearn Deal Source', 'Age'])
-        return df
-    except Exception as e:
-        st.error(f"Failed to load data: {e}")
-        return pd.DataFrame()
+        df['Create Month'] = df['Create Date'].dt.month
+        df['Create Year'] = df['Create Date'].dt.year
 
-df = load_data()
-if df.empty:
-    st.stop()
+        # Encode categorical variables
+        le_country = LabelEncoder()
+        le_source = LabelEncoder()
+        df['Country_enc'] = le_country.fit_transform(df['Country'])
+        df['Source_enc'] = le_source.fit_transform(df['JetLearn Deal Source'])
 
-# Extract year-month columns
-df['Create_YearMonth'] = df['Create Date'].dt.to_period('M')
-df['Payment_YearMonth'] = df['Payment Received Date '].dt.to_period('M')
+        features = ['Age', 'HubSpot Deal Score', 'Country_enc', 'Source_enc', 'Create Month', 'Create Year']
+        target = 'Enrolled'
 
-# Age grouping (optional)
-df['AgeGroup'] = pd.cut(df['Age'], bins=[4, 8, 12, 16, 20], labels=['5-8', '9-12', '13-16', '17-20'])
+        X = df[features]
+        y = df[target]
 
-# Select Month to Predict
-predict_month = st.date_input("Select Month to Predict Enrolments", datetime.today()).strftime('%Y-%m')
+        # Split the dataset
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Grouping
-group = df.groupby(['Create_YearMonth', 'Payment_YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup'], observed=False) \
-          .size().reset_index(name='Enrollments')
+        # Train the model
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
 
-# Filters for the selected prediction month
-group['Create_YearMonth'] = group['Create_YearMonth'].astype(str)
-group['Payment_YearMonth'] = group['Payment_YearMonth'].astype(str)
-predict_df = group[group['Payment_YearMonth'] == predict_month]
+        # Test accuracy
+        y_pred = model.predict(X_test)
+        st.subheader("Model Performance on Test Data")
+        st.text(classification_report(y_test, y_pred))
+        st.write("Confusion Matrix:")
+        st.write(confusion_matrix(y_test, y_pred))
 
-# Breakout
-same_month = predict_df[predict_df['Create_YearMonth'] == predict_month]['Enrollments'].sum()
-prior_months = predict_df[predict_df['Create_YearMonth'] != predict_month]['Enrollments'].sum()
-total = same_month + prior_months
+        # Upload new data for prediction
+        st.markdown("---")
+        st.header("📈 Predict Enrolments for August 2025")
+        aug_file = st.file_uploader("Upload Excel File for August Prediction", type=["xlsx", "xls"], key="predict_aug")
 
-# Output
-st.subheader(f"📅 Enrolment Prediction for {predict_month}")
-st.write(f"✅ **From Deals Created in Same Month:** {same_month}")
-st.write(f"📂 **From Deals Created in Prior Months:** {prior_months}")
-st.write(f"🔢 **Total Predicted Enrolments:** {total}")
+        if aug_file:
+            aug_df = pd.read_excel(aug_file)
+            aug_required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score']
+            if not all(col in aug_df.columns for col in aug_required_cols):
+                st.error(f"Missing one or more required columns: {aug_required_cols}")
+            else:
+                aug_df['Create Date'] = pd.to_datetime(aug_df['Create Date'], errors='coerce')
+                aug_df['Create Month'] = aug_df['Create Date'].dt.month
+                aug_df['Create Year'] = aug_df['Create Date'].dt.year
+
+                # Encode using same encoders
+                aug_df['Country_enc'] = le_country.transform(aug_df['Country'])
+                aug_df['Source_enc'] = le_source.transform(aug_df['JetLearn Deal Source'])
+
+                X_aug = aug_df[features]
+                aug_df['Predicted Enrolment'] = model.predict(X_aug)
+
+                # Categorize deal month
+                aug_start = pd.Timestamp("2025-08-01")
+                aug_end = pd.Timestamp("2025-08-31")
+
+                def tag_month(row):
+                    if aug_start <= row['Create Date'] <= aug_end:
+                        return 'M0 (Aug Deals)'
+                    elif row['Create Date'].month == 7 and row['Create Date'].year == 2025:
+                        return 'M-1 (Jul Deals)'
+                    elif row['Create Date'] < pd.Timestamp("2025-07-01"):
+                        return 'M-n (Before Jul)'
+                    else:
+                        return 'Future/Invalid'
+
+                aug_df['Deal Month Category'] = aug_df.apply(tag_month, axis=1)
+                aug_df = aug_df[aug_df['Deal Month Category'] != 'Future/Invalid']
+
+                # Aggregate prediction
+                result = aug_df.groupby('Deal Month Category')['Predicted Enrolment'].sum().reset_index()
+                total = result['Predicted Enrolment'].sum()
+                result.loc[len(result.index)] = ['Total Predicted Enrolments for August', total]
+
+                st.subheader("Predicted Enrolments Breakdown")
+                st.dataframe(result)
+
+                # CSV export
+                csv = result.to_csv(index=False)
+                st.download_button("Download Prediction as CSV", csv, "ml_predicted_enrolments_aug.csv", "text/csv")
