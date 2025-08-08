@@ -1,112 +1,97 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import LabelEncoder
+import streamlit as st
 from datetime import datetime
+from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="JetLearn Enrolment Predictor", layout="wide")
-
-# Function to standardize 'Payment Received Date'
-def standardize_payment_column(df):
-    for col in df.columns:
-        if col.strip().lower() == 'payment received date':
-            df.rename(columns={col: 'Payment Received Date'}, inplace=True)
-            break
-    if 'Payment Received Date' not in df.columns:
-        df['Payment Received Date'] = pd.NaT
-    df['Payment Received Date'] = pd.to_datetime(df['Payment Received Date'], errors='coerce', dayfirst=True)
-    return df
-
-@st.cache_data
-def load_training_data():
-    df = pd.read_csv("prediction_JL_cleaned.csv")
-    df = standardize_payment_column(df)
-    df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce', dayfirst=True)
-    df['Create_YearMonth'] = df['Create Date'].dt.to_period('M')
-    df['Payment_YearMonth'] = df['Payment Received Date'].dt.to_period('M')
-    df['Age'] = df['Age'].fillna(df['Age'].median())
-    df['AgeGroup'] = pd.cut(df['Age'], bins=[0, 10, 14, 18, 25, 100], labels=['0-10','11-14','15-18','19-25','25+'])
-
-    # Group by to find actual enrolments
-    group = df.groupby(['Create_YearMonth', 'Payment_YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup']) \
-              .size().reset_index(name='Enrollments')
-
-    return df, group
-
-df, train_grouped = load_training_data()
-
-# Prepare label encoders
-le_country = LabelEncoder()
-le_source = LabelEncoder()
-le_agegroup = LabelEncoder()
-
-train_grouped['Country_enc'] = le_country.fit_transform(train_grouped['Country'])
-train_grouped['Source_enc'] = le_source.fit_transform(train_grouped['JetLearn Deal Source'])
-train_grouped['AgeGroup_enc'] = le_agegroup.fit_transform(train_grouped['AgeGroup'].astype(str))
-
-X_train = train_grouped[['Country_enc', 'Source_enc', 'AgeGroup_enc']]
-y_train = train_grouped['Enrollments']
-
-model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
-
-# File upload section
+# Streamlit UI
+st.set_page_config(layout="wide")
 st.title("📊 JetLearn Monthly Enrolment Predictor")
-uploaded_file = st.file_uploader("Upload data file (CSV, XLSX, XLS)", type=["csv", "xlsx", "xls"])
+
+# File uploader
+uploaded_file = st.file_uploader("Upload your data file", type=["csv", "xls", "xlsx"])
 
 if uploaded_file is not None:
-    try:
-        ext = uploaded_file.name.split('.')[-1]
-        if ext == "csv":
-            deals_df = pd.read_csv(uploaded_file)
-        else:
-            deals_df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
+    # Load file depending on type
+    if uploaded_file.name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
+    st.success("✅ File uploaded successfully!")
+
+    # Standardize column names
+    df.columns = df.columns.str.strip()
+
+    # Parse dates
+    if 'Create Date' in df.columns:
+        df['Create Date'] = pd.to_datetime(df['Create Date'], errors='coerce', dayfirst=True)
+    else:
+        st.error("❌ 'Create Date' column is missing.")
         st.stop()
 
-    deals_df = standardize_payment_column(deals_df)
-    deals_df['Create Date'] = pd.to_datetime(deals_df['Create Date'], errors='coerce', dayfirst=True)
-    deals_df['Payment Received Date'] = pd.to_datetime(deals_df['Payment Received Date'], errors='coerce', dayfirst=True)
+    if 'Payment Received Date' not in df.columns:
+        df['Payment Received Date'] = pd.NaT
+    else:
+        df['Payment Received Date'] = pd.to_datetime(df['Payment Received Date'], errors='coerce', dayfirst=True)
 
-    deals_df['Create_YearMonth'] = deals_df['Create Date'].dt.to_period('M')
-    deals_df['Payment_YearMonth'] = deals_df['Payment Received Date'].dt.to_period('M')
-    deals_df['Age'] = deals_df['Age'].fillna(deals_df['Age'].median())
+    # Fill missing Age
+    if 'Age' in df.columns:
+        df['Age'] = pd.to_numeric(df['Age'], errors='coerce')
+        df['Age'] = df['Age'].fillna(df['Age'].median()).astype(int)
+    else:
+        st.error("❌ 'Age' column is missing.")
+        st.stop()
 
-    deals_df['AgeGroup'] = pd.cut(deals_df['Age'], bins=[0, 10, 14, 18, 25, 100], labels=['0-10','11-14','15-18','19-25','25+'])
+    # Prepare features for modeling
+    df['Create_YearMonth'] = df['Create Date'].dt.to_period('M').astype(str)
+    df['Payment_YearMonth'] = df['Payment Received Date'].dt.to_period('M').astype(str)
+    df['AgeGroup'] = pd.cut(df['Age'], bins=[0, 8, 12, 16, 99], labels=['Under 9', '9-12', '13-16', '17+'])
 
-    # Fill missing and handle unseen labels
-    deals_df['Country'] = deals_df['Country'].fillna("Unknown")
-    deals_df['JetLearn Deal Source'] = deals_df['JetLearn Deal Source'].fillna("Unknown")
+    # Group data
+    group = df.groupby(['Create_YearMonth', 'Payment_YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup']) \
+        .size().reset_index(name='Deal Count')
 
-    for col, encoder in [('Country', le_country), ('JetLearn Deal Source', le_source)]:
-        new_labels = set(deals_df[col].unique()) - set(encoder.classes_)
-        if new_labels:
-            encoder.classes_ = np.concatenate([encoder.classes_, list(new_labels)])
+    # Feature engineering
+    X = group.groupby(['Create_YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup'])['Deal Count'].sum().reset_index()
+    y = group.groupby(['Payment_YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup'])['Deal Count'].sum().reset_index()
 
-    deals_df['Country_enc'] = le_country.transform(deals_df['Country'])
-    deals_df['Source_enc'] = le_source.transform(deals_df['JetLearn Deal Source'])
-    deals_df['AgeGroup_enc'] = le_agegroup.transform(deals_df['AgeGroup'].astype(str))
+    # Rename for merge
+    X.rename(columns={'Create_YearMonth': 'YearMonth'}, inplace=True)
+    y.rename(columns={'Payment_YearMonth': 'YearMonth', 'Deal Count': 'Payment Count'}, inplace=True)
 
-    X_test = deals_df[['Country_enc', 'Source_enc', 'AgeGroup_enc']]
-    deals_df['Predicted Enrolment'] = model.predict(X_test).round().astype(int)
+    # Merge on features
+    data = pd.merge(X, y, on=['YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup'], how='left').fillna(0)
 
-    # Compute Converted in Current and Next Month
-    deals_df['Converted in Current Month'] = (
-        (deals_df['Create_YearMonth'] == deals_df['Payment_YearMonth'])
-    ).astype(int)
+    # Encode categorical features
+    X_encoded = pd.get_dummies(data[['YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup']])
+    y_values = data['Payment Count']
 
-    deals_df['Converted in Next Month'] = (
-        (deals_df['Payment_YearMonth'] == (deals_df['Create_YearMonth'] + 1))
-    ).astype(int)
+    # Train model
+    model = LinearRegression()
+    model.fit(X_encoded, y_values)
 
-    st.success("✅ Prediction Completed!")
-    st.dataframe(deals_df[['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score',
-                           'Predicted Enrolment', 'Converted in Current Month', 'Converted in Next Month']])
+    # Predict for current and next month
+    today = pd.Timestamp.today()
+    this_month = today.to_period('M').strftime('%Y-%m')
+    next_month = (today + pd.DateOffset(months=1)).to_period('M').strftime('%Y-%m')
 
-    csv = deals_df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Results as CSV", data=csv, file_name="predicted_enrolments.csv", mime='text/csv')
+    predict_df = data.copy()
+    predict_df['YearMonth'] = this_month
+    this_month_X = pd.get_dummies(predict_df[['YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup']])
+    this_month_X = this_month_X.reindex(columns=X_encoded.columns, fill_value=0)
+    predict_df['This Month Prediction'] = model.predict(this_month_X)
 
-else:
-    st.info("👆 Upload your file to begin prediction.")
+    predict_df['YearMonth'] = next_month
+    next_month_X = pd.get_dummies(predict_df[['YearMonth', 'Country', 'JetLearn Deal Source', 'AgeGroup']])
+    next_month_X = next_month_X.reindex(columns=X_encoded.columns, fill_value=0)
+    predict_df['Next Month Prediction'] = model.predict(next_month_X)
+
+    result = predict_df[['Country', 'JetLearn Deal Source', 'AgeGroup', 'This Month Prediction', 'Next Month Prediction']]
+    result_summary = result.groupby(['Country', 'JetLearn Deal Source', 'AgeGroup']).sum().reset_index()
+
+    st.subheader("📈 Predicted Enrollments by Segment")
+    st.dataframe(result_summary)
+
+    # Option to download
+    st.download_button("Download Predictions as CSV", result_summary.to_csv(index=False), file_name="predicted_enrollments.csv", mime="text/csv")
