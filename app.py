@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 import datetime
 
@@ -23,7 +21,6 @@ if 'Payment Received Date ' not in df.columns:
 
 df['Enrolled'] = df['Payment Received Date '].notna().astype(int)
 
-# Check required columns
 required_cols = ['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score', 'Enrolled']
 if not all(col in df.columns for col in required_cols):
     st.error("Missing required columns in training data.")
@@ -50,7 +47,7 @@ target = 'Enrolled'
 X = df[features]
 y = df[target]
 
-# Train model
+# Train model with class_weight
 model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
 model.fit(X, y)
 
@@ -89,15 +86,31 @@ if uploaded_file:
         X_new = deals_df[features]
         deals_df['Predicted Enrolment'] = model.predict(X_new)
 
-        # Optional: check actual enrolment if Payment Received Date is present
+        # Optional: Actual Enrolment & Conversion Month Logic
         if 'Payment Received Date ' in deals_df.columns:
+            deals_df['Payment Received Date '] = pd.to_datetime(deals_df['Payment Received Date '], errors='coerce')
             deals_df['Actual Enrolment'] = deals_df['Payment Received Date '].notna().astype(int)
+
+            def current_month_conv(row):
+                if pd.isna(row['Payment Received Date ']) or pd.isna(row['Create Date']):
+                    return 0
+                return int(row['Create Date'].to_period("M") == row['Payment Received Date '].to_period("M"))
+
+            def next_month_conv(row):
+                if pd.isna(row['Payment Received Date ']) or pd.isna(row['Create Date']):
+                    return 0
+                return int(row['Create Date'].to_period("M") + 1 == row['Payment Received Date '].to_period("M"))
+
+            deals_df['Converted in Current Month'] = deals_df.apply(current_month_conv, axis=1)
+            deals_df['Converted in Next Month'] = deals_df.apply(next_month_conv, axis=1)
+
             st.subheader("📊 Prediction vs Actual")
             st.write(deals_df[['Predicted Enrolment', 'Actual Enrolment']].value_counts())
 
-        # Show and download
-        st.subheader("🔮 Prediction Summary")
-        st.dataframe(deals_df[['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score', 'Predicted Enrolment']])
+        # Display and download
+        st.subheader("🔮 Prediction Output")
+        st.dataframe(deals_df[['Country', 'Age', 'JetLearn Deal Source', 'Create Date', 'HubSpot Deal Score',
+                               'Predicted Enrolment', 'Converted in Current Month', 'Converted in Next Month']])
 
         csv = deals_df.to_csv(index=False)
-        st.download_button("Download Predictions CSV", csv, "predicted_enrolments.csv", "text/csv")
+        st.download_button("Download Predictions CSV", csv, "predicted_enrolments_with_conversion_months.csv", "text/csv")
